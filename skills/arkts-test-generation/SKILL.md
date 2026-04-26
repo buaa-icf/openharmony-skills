@@ -1,18 +1,23 @@
 ---
 name: arkts-test-generation
-description: Use when authoring or repairing ArkTS/OpenHarmony tests for HarmonyOS modules — covers both `src/test/*.test.ets` Local Tests for non-UI logic (suite registration in `List.test.ets`, hvigor `test -p coverage=true`, `.test/default/...` artifact verification, route-capture helpers for `@Entry` or non-exported pages) and `src/ohosTest/*.test.ets` Instrument Tests for UI components (custom testability host pages, stable `.id(...)` selectors, `onDeviceTest` coverage, on-device crash debugging). Also covers testing `@ComponentV2` private/internal methods (event-driven branches inside `onActionEnd`, `@Watch`/`@Monitor` callbacks, async `.then(...)` side effects) without modifying the source under test, via the host page + gating flag + state-echo pattern. Defer pure execution of existing suites to `local-test` or `instrument-test`. Do not modify the source file under test to make it easier to cover.
+description: Use when authoring or repairing ArkTS/OpenHarmony test code for HarmonyOS modules — covers both `src/test/*.test.ets` Local Tests for non-UI logic (suite registration in `List.test.ets`, route-capture helpers for `@Entry` or non-exported pages, MockKit/Hypium patterns) and `src/ohosTest/*.test.ets` Instrument Tests for UI components (custom testability host pages, hvigor build-time host-page replacement, stable `.id(...)` selectors, `@ComponentV2` private/internal method testing via host page + gating flags + state echo). This skill writes the test code and wires it into the suite; hand off execution, coverage runs, and artifact verification to the sibling `local-test` skill (Local Test) or `instrument-test` skill (Instrument Test). Do not modify the source file under test to make it easier to cover.
 ---
 
 # ArkTS Test Generation
 
 ## Overview
 
-Author or repair ArkTS test suites for HarmonyOS modules and make their coverage output trustworthy. This skill spans both test types:
+Author or repair ArkTS test suites for HarmonyOS modules. This skill spans both test types:
 
-- **Local Test** (`src/test/*.test.ets`) — non-UI logic exercised through Hypium, run with `hvigorw test`.
-- **Instrument Test** (`src/ohosTest/*.test.ets`) — UI components and builders exercised on a real device via `onDeviceTest`.
+- **Local Test** (`src/test/*.test.ets`) — non-UI logic exercised through Hypium.
+- **Instrument Test** (`src/ohosTest/*.test.ets`) — UI components and builders that need a real device.
 
-Choose the right test type, write or extend the suite, register it, run with coverage, then verify the produced artifacts before claiming success. Do not edit the file under test to make coverage easier — solve from the test side.
+Pick the right test type, write or extend the suite, register it in the module's test entry. Hand off **execution and coverage verification** to the sibling skill for the chosen test type:
+
+- Local Test → `local-test` skill
+- Instrument Test → `instrument-test` skill
+
+Do not edit the file under test to make coverage easier — solve from the test side.
 
 ## Decision: Local Test Or Instrument Test
 
@@ -22,18 +27,18 @@ Choose the right test type, write or extend the suite, register it, run with cov
 | `@Entry` or non-exported page that only needs logic-level assertions | **Local Test** + route-capture helper |
 | Builder functions, settings panels, gestures, dialogs, navigation, anything depending on real layout/lifecycle | **Instrument Test** |
 | `@ComponentV2` private method that cannot be triggered without the real component | **Instrument Test** + the [@ComponentV2 Private Method pattern](#pattern-testing-componentv2-private-methods-without-modifying-source) below |
-| User just wants to *run* an existing suite (no new test code) | Hand off to `local-test` or `instrument-test` |
+| User just wants to *run* an existing suite (no new test code) | Hand off to `local-test` or `instrument-test` directly |
 
 Do not design UI-style assertions inside Local Test, and do not write logic-only assertions inside Instrument Test when Local Test would do.
 
 ---
 
-## Local Test Workflow
+## Local Test Authoring Workflow
 
 ### 1. Gather context
 
 - Inspect the source file under test, existing `src/test` files, and suite registration such as `List.test.ets`.
-- Identify the module name, the exact test suite name, and whether the repo has a root `hvigorw` wrapper or requires the DevEco `hvigorw.js` entry.
+- Identify the module name and the exact test suite name so the suite can be addressed by `-p scope={suiteName}` later.
 - Confirm the requested behavior can be asserted as basic logic without UI rendering, gestures, or component interaction flows.
 - For page files, check whether the target is exported or is an `@Entry`-only page so you can choose between direct construction, route capture, or another test-local seam before writing assertions.
 - Look for shared global state or async setters that need reset logic between cases.
@@ -60,47 +65,19 @@ Do not design UI-style assertions inside Local Test, and do not write logic-only
 - Export the new suite through the module's test entry, commonly `src/test/List.test.ets`.
 - Keep suite names stable so `-p scope={suiteName}` works from the command line.
 
-### 4. Run Local Test with coverage
+### 4. Hand off execution to `local-test`
 
-- Default to running ArkTS Local Test outside the sandbox. Treat outside-sandbox execution as the normal verification path, not an escalation fallback.
-- Prefer `hvigorw test -p module={moduleName} -p coverage=true -p scope={suiteName}#{methodName}` for a single case.
-- Use `-p scope={suiteName}` for the whole suite.
-- Invoke DevEco's `hvigorw.js` directly when the repo does not contain a `hvigorw` wrapper.
-- Prefix the command with `DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk` when the SDK path is not already exported in the shell.
-- If a sandbox run hangs, repeats `Darwin`, reports previewer socket errors such as `connect socket failed`, or fails to produce `test_result.txt`, rerun the same Local Test command outside the sandbox before diagnosing coverage logic.
-
-### 5. Verify Local Test artifacts
-
-- Verify artifacts from the outside-sandbox run that you will cite as evidence.
-- Read `.test/default/intermediates/test/coverage_data/test_result.txt` to confirm the tests actually executed.
-- Confirm `.test/default/intermediates/test/coverage_data/js_coverage.json` exists.
-- Read `.test/default/outputs/test/reports/coverageReport.json` and the target HTML file under `.test/default/outputs/test/reports/...`.
-- Claim coverage is fixed only after the target file summary is non-zero.
-
-### 6. Diagnose zero coverage
-
-- Read [references/zero-coverage-workflow.md](references/zero-coverage-workflow.md) when `coverage=true` still produces all-zero JSON or HTML.
-- Run `scripts/patch-hypium-local-test-coverage.js` from the repo root, or pass the repo path explicitly, when the parser misses runtime coverage payloads.
-- Re-run the same Local Test command and verify that `coverage.log` contains `OHOS_REPORT_COVERAGE_DATA`.
-
-### Local Test command patterns
-
-- Single suite:
-  `hvigorw test -p module=phone -p coverage=true -p scope=AccessibilitySettingModelTest`
-- Single case:
-  `hvigorw test -p module=phone -p coverage=true -p scope=AccessibilitySettingModelTest#updates enum based accessibility settings`
-- Outside-sandbox pattern when the repo has no `hvigorw` wrapper:
-  `DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk /Applications/DevEco-Studio.app/Contents/tools/node/bin/node /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw.js --no-daemon test -p module={moduleName} -p coverage=true -p scope={suiteName}`
+- Authoring is done. Hand off to the `local-test` skill to run the suite and produce coverage artifacts.
+- If `local-test` reports zero coverage despite the tests actually executing, apply `scripts/patch-hypium-local-test-coverage.js` and re-run via `local-test`. See [references/zero-coverage-workflow.md](references/zero-coverage-workflow.md) for the diagnosis checklist.
 
 ---
 
-## Instrument Test Workflow
+## Instrument Test Authoring Workflow
 
 ### 1. Read the target
 
 - Read the target component, its `src/ohosTest` module, and any existing `*.test.ets` files.
-- Confirm `@ohos/hypium` already resolves for the module before spending time on selector debugging. Missing dependency failures are setup issues, not selector bugs.
-- Confirm the module has a usable signing configuration. Without it the test will stop at packaging long before `GenerateDeviceCoverage`.
+- Confirm `@ohos/hypium` already resolves for the module before writing test code. Missing dependency failures are setup issues, not selector bugs.
 
 ### 2. Translate the request into UI assertions
 
@@ -132,75 +109,9 @@ Do not design UI-style assertions inside Local Test, and do not write logic-only
 - Fail on `component === null` before interacting so the test reports the missing selector instead of `click of null`.
 - Throw explicit errors such as `Unable to find id: ...` or `Unable to find text: ...` from the helper wrappers so device failures point to the missing selector immediately.
 
-### 5. Run `onDeviceTest` outside the sandbox
+### 5. Hand off execution to `instrument-test`
 
-Run the real `onDeviceTest` command outside the sandbox by default. Request escalation instead of spending time on a sandboxed device run that is likely to fail at `GenerateDeviceCoverage`. A common form:
-
-```bash
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
-NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node \
-/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw \
---no-daemon onDeviceTest -p module=<module>@ohosTest -p coverage=true \
--p scope=<SuiteName>[#<methodName>] -p ohos-debug-asan=true
-```
-
-If the repo already uses the Node-backed `hvigorw.js`, use that entrypoint instead.
-
-- Run the command from the repo root or hvigor project root. Running from a module directory can fail with missing `hvigor-config.json5`.
-- Set `NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node` explicitly when `hvigorw` fails with `NODE_HOME is not set and not 'node' command found in your path`.
-- Prefer `--no-daemon` in agent shells to avoid stale hvigor daemon lock or registration failures.
-- If the device run still fails with `Connect server failed`, confirm the device bridge in that same non-sandbox environment with `/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc list targets`. A returned target such as `127.0.0.1:5555` means the bridge is reachable.
-
-### 6. Verify Instrument Test artifacts
-
-Use coverage artifacts under `<module>/.test/default/intermediates/ohosTest/coverage_data/` and `<module>/.test/default/outputs/ohosTest/reports/` to confirm which UI branch actually executed, not just whether hvigor finished. Do not claim device-side success from compile or signing output alone — a run that reaches `SignHap` only proves the test still builds.
-
-Confirm all of these from the non-sandbox run when available:
-
-- `coverage_data/test_result.txt` shows `result=Success`
-- `coverage_data/coverage.log` shows `Pass`
-- `reports/coverageReport.json` shows the target function count greater than `0`
-- The run did not fail earlier on missing `@ohos/hypium` or unsigned hap packaging.
-- If the non-sandbox run stops at `GenerateDeviceCoverage` with `Connect server failed`, report that compile and signing succeeded but device execution was not verified.
-- If a sandboxed attempt disagrees with the non-sandbox run, treat the non-sandbox run as the real verification result and call out the environment difference explicitly.
-
-### 7. Instrument Test debugging order
-
-1. Compile failure
-   - Confirm `@ohos/hypium` is available to the module before touching test code.
-   - Fix ArkTS strict typing first.
-   - Give object literals explicit interfaces or classes.
-   - Check copied testability page imports and relative paths.
-2. Signing or packaging failure
-   - Treat missing signature output as an environment prerequisite failure.
-   - Do not keep changing `ohosTest` selectors while hvigor still stops before install or `GenerateDeviceCoverage`.
-   - Once signing is fixed, rerun the full device test before changing code again.
-3. `click of null` or `getText of null`
-   - Replace `findComponent` with `waitForComponent`.
-   - Assert `component !== null` before interacting.
-   - Confirm the expected host page actually launched.
-   - Replace text-based action selectors with ids when the target text is duplicated or rendered through `Span`.
-4. Assertion fails inside a helper like `findByText(...)`
-   - Read the helper message first and determine whether the selector is ambiguous, duplicated, or bound to the wrong node.
-   - Check whether the test is clicking a history chip, a suggestion row, and a host-page button that all share display text. If so, add ids and stop using text for that action path.
-5. App dies before assertions
-   - Read `coverage.log` and device `hilog`.
-   - Look for missing bundle, HSP, or runtime kit errors.
-   - If the crash comes from a runtime kit used only for types, decouple the component from that runtime dependency.
-   - Lazily obtain `window` or `UIContext` handles instead of grabbing them in field initializers when lifecycle timing is brittle.
-6. Coverage looks wrong
-   - Read `test_result.txt` first.
-   - Open `reports/coverageReport.json` or the HTML report and compare which `if` or builder branches executed.
-   - If the first scenario passes but the second scenario cannot reopen the same dialog or route, inspect shared host-page state before changing component logic.
-   - If initial-state and suggestion-state branches executed but result-state or empty-state branches did not, investigate the last click target or state flip before changing the host setup.
-   - Confirm the target function count in `coverageReport.json` before treating coverage generation as failed.
-   - A noisy hvigor coverage warning can still leave valid `test_result.txt` and `coverageReport.json` artifacts.
-7. `Connect server failed`
-   - Distinguish environment failure from test failure first.
-   - Treat non-sandbox `onDeviceTest` as the only authoritative device run. If someone already ran it in the sandbox, rerun outside the sandbox before changing test code.
-   - Retry `hdc list targets` in the same non-sandbox environment that will run `onDeviceTest`.
-   - If `hvigorw` then fails before compile with `NODE_HOME is not set and not 'node' command found in your path`, prepend `NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node` and retry.
-   - If `hvigorw` fails to acquire daemon registration or lock state, rerun with `--no-daemon`.
+- Authoring is done. Hand off to the `instrument-test` skill to run `onDeviceTest`, collect coverage, and report device-side artifacts.
 
 ---
 
@@ -211,7 +122,7 @@ A `@ComponentV2` struct's `private` methods cannot be called from outside, yet t
 - **Make the method `public` or move it into a model** — invasive, breaks encapsulation, and the moved logic is no longer the original code if it depends on `@Trace` fields, frame width, or layout sizes.
 - **Extract a pure function and unit-test that** — same problem when the logic is bound to component state.
 
-Right answer: **launch the real component inside an Instrument Test process**, drive the target method through its real triggers (gesture, click, property callback), then read component state back to assert. Four pillars make this reliable.
+Right answer: **author an Instrument Test that launches the real component**, drive the target method through its real triggers (gesture, click, property callback), then read component state back to assert. Four pillars make this reliable.
 
 ### Pillar 1 — Testability host page
 
@@ -352,33 +263,19 @@ export default function FeatureTest() {
 
 `triggerTargetMethod` must hug the target's real call site — `PanGesture` → `DRIVER.swipe`, with **swipe coordinates that avoid other tappable children** (buttons, image tap regions) inside the component, otherwise the swipe lands on the wrong element.
 
-**4. Wire and run.** Import the new suite in `<module>/src/ohosTest/ets/test/List.test.ets` and call it from `testsuite()`. Run via the sibling `instrument-test` skill's script — and use **`uv run python`** (this machine's Python is managed by `uv`):
+**4. Wire and hand off.** Import the new suite in `<module>/src/ohosTest/ets/test/List.test.ets` and call it from `testsuite()`. Then hand off to the `instrument-test` skill for `onDeviceTest` execution.
 
-```bash
-export PATH="/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin:/Applications/DevEco-Studio.app/Contents/tools/node/bin:$PATH"
-export DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk
-export NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node
-uv run python ~/.claude/skills/instrument-test/scripts/run_instrument_test.py \
-  --project-path <project-root> \
-  --module <module-name> \
-  --no-coverage \
-  --scope <TestSuiteName> \
-  --timeout 600
-```
+### Authoring-time failure modes for this pattern
 
-Do **not** invoke `python3` directly — that picks up the wrong interpreter and dependency set.
-
-The script returns JSON, but the `reports` field is sometimes empty. Do not trust `success=true` on its own. **Read** `<module>/.test/default/intermediates/ohosTest/coverage_data/test_result.txt` and confirm its last line matches `Tests run: N, Failure: 0, Error: 0, Pass: N, Ignore: 0`.
-
-### Failure modes for this pattern
+These show up before the test even runs cleanly — fix in the host-page or test code, not by tweaking the runner.
 
 | Symptom | Root cause | Fix |
 |---|---|---|
-| `Cannot find module '...AvatarUpload'` | Host-page `import` relative-path level count is wrong | Recount from `build/default/intermediates/src/ohosTest/ets/testability/pages/` to `src/main/ets/...` — typically eight `..` levels |
-| `Component not found: <id>` | Host page was not replaced into the build, or has not rendered yet | Verify the hvigor plugin actually ran; `beforeAll` should wait for `HOST_ANCHOR_ID` before the first case |
-| Asserted value is off by one gesture increment | Gating switch was not disabled, so `onActionUpdate` polluted state before `onActionEnd` | Disable every `*Enabled` switch at the top of `apply(scenario)` |
-| `The path ... phone-default-signed.hap does not exist` | Signing environment issue (not a test bug) | Configure signing in DevEco or move to a signed environment |
-| Script reports `success=true` but `reports` is `{}` | Normal when coverage is disabled | Read `test_result.txt` for the real verdict |
+| `Cannot find module '...AvatarUpload'` at compile | Host-page `import` relative-path level count is wrong | Recount from `build/default/intermediates/src/ohosTest/ets/testability/pages/` to `src/main/ets/...` — typically eight `..` levels |
+| `Component not found: <id>` in early run | Host page was not replaced into the build, or has not rendered yet | Verify the hvigor plugin actually ran for this module; have `beforeAll` wait on `HOST_ANCHOR_ID` before the first case |
+| Asserted value off by one gesture increment | Gating switch was not disabled, so `onActionUpdate` polluted state before `onActionEnd` | Disable every `*Enabled` switch at the top of `apply(scenario)` |
+
+For runtime/device-side failures (signing, `Connect server failed`, coverage parser quirks, JSON `success=true` with empty `reports`), defer to the `instrument-test` skill.
 
 ### Recap
 
@@ -386,28 +283,13 @@ The script returns JSON, but the `reports` field is sometimes empty. Do not trus
 - Gating flags isolate unrelated state updates so the target method runs against a clean input.
 - `Text` + `.id()` echo plus `waitForText` give a stable async read of `@Trace` state.
 - One button per scenario with the math precomputed.
-- Drive `instrument-test` script via `uv run python` and rely on `test_result.txt` as the final verdict.
+- `instrument-test` skill owns execution and verdict reporting.
 
 ---
-
-## Reporting Results
-
-Whichever workflow you ran, finish with:
-
-- The exact command used (Local Test or `onDeviceTest`).
-- An explicit note that execution happened outside the sandbox, or that you could not run it there.
-- For Local Test: whether `scripts/patch-hypium-local-test-coverage.js` was applied.
-- An explicit out-of-scope note for any requested scenario you intentionally skipped because it belonged to the other test type (e.g. UI flow declined inside a Local Test request, or pure logic declined inside an Instrument Test request).
-- Links to the test file plus the relevant artifacts: `js_coverage.json`, `coverageReport.json`, the HTML report, and `coverage_data/coverage.log` when relevant.
-
-## Notes
-
-- `onDeviceTest` may rewrite generated `BuildProfile` files. Restore obvious test-generated noise before finishing.
-- Ignore unrelated dirty files and do not revert user changes.
 
 ## Resources
 
 - `scripts/patch-hypium-local-test-coverage.js`
-  Apply the local previewer workaround when Local Test coverage data stays in memory but never reaches `js_coverage.json`.
+  Workaround for a Hypium coverage parser bug under the local previewer. Apply when the `local-test` skill reports zero Local Test coverage despite `test_result.txt` showing the suite executed.
 - `references/zero-coverage-workflow.md`
-  Diagnosis checklist and expected artifact locations for all-zero Local Test coverage.
+  Diagnosis checklist for that zero-coverage scenario, including the artifact paths to inspect before applying the patch.

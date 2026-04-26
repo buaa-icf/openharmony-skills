@@ -9,11 +9,13 @@ Claude Code skills for OpenHarmony and ArkTS testing workflows.
   Local Tests for non-UI logic and `src/ohosTest` Instrument Tests for
   UI components — and verify their coverage artifacts.
 
-  This skill complements (does not replace) other skills already shipped
-  under `~/.claude/skills/`:
+  This skill complements (does not replace) the test-runner skills
+  already shipped under `~/.claude/skills/`:
   - `local-test` / `instrument-test` — *run* existing suites
-  - `arkts-componentv2-private-method-test` — narrow `@ComponentV2`
-    private-method scenarios
+
+  It also subsumes the `@ComponentV2` private-method testing pattern
+  (host page + hvigor replacement plugin + gating flags + state echo),
+  which is documented as a dedicated section inside SKILL.md.
 
 ## Repository Layout
 

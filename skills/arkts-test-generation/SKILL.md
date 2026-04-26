@@ -1,6 +1,6 @@
 ---
 name: arkts-test-generation
-description: Use when authoring or repairing ArkTS/OpenHarmony tests for HarmonyOS modules — covers both `src/test/*.test.ets` Local Tests for non-UI logic (suite registration in `List.test.ets`, hvigor `test -p coverage=true`, `.test/default/...` artifact verification, route-capture helpers for `@Entry` or non-exported pages) and `src/ohosTest/*.test.ets` Instrument Tests for UI components (custom testability host pages, stable `.id(...)` selectors, `onDeviceTest` coverage, on-device crash debugging). Defer narrow `@ComponentV2` private-method scenarios to `arkts-componentv2-private-method-test`. Defer pure execution of existing suites to `local-test` or `instrument-test`. Do not modify the source file under test to make it easier to cover.
+description: Use when authoring or repairing ArkTS/OpenHarmony tests for HarmonyOS modules — covers both `src/test/*.test.ets` Local Tests for non-UI logic (suite registration in `List.test.ets`, hvigor `test -p coverage=true`, `.test/default/...` artifact verification, route-capture helpers for `@Entry` or non-exported pages) and `src/ohosTest/*.test.ets` Instrument Tests for UI components (custom testability host pages, stable `.id(...)` selectors, `onDeviceTest` coverage, on-device crash debugging). Also covers testing `@ComponentV2` private/internal methods (event-driven branches inside `onActionEnd`, `@Watch`/`@Monitor` callbacks, async `.then(...)` side effects) without modifying the source under test, via the host page + gating flag + state-echo pattern. Defer pure execution of existing suites to `local-test` or `instrument-test`. Do not modify the source file under test to make it easier to cover.
 ---
 
 # ArkTS Test Generation
@@ -21,7 +21,7 @@ Choose the right test type, write or extend the suite, register it, run with cov
 | Pure logic, mapping, model methods, state transitions, no UI rendering | **Local Test** |
 | `@Entry` or non-exported page that only needs logic-level assertions | **Local Test** + route-capture helper |
 | Builder functions, settings panels, gestures, dialogs, navigation, anything depending on real layout/lifecycle | **Instrument Test** |
-| `@ComponentV2` private method that cannot be triggered without the real component | Hand off to `arkts-componentv2-private-method-test` |
+| `@ComponentV2` private method that cannot be triggered without the real component | **Instrument Test** + the [@ComponentV2 Private Method pattern](#pattern-testing-componentv2-private-methods-without-modifying-source) below |
 | User just wants to *run* an existing suite (no new test code) | Hand off to `local-test` or `instrument-test` |
 
 Do not design UI-style assertions inside Local Test, and do not write logic-only assertions inside Instrument Test when Local Test would do.
@@ -109,7 +109,7 @@ Do not design UI-style assertions inside Local Test, and do not write logic-only
 
 ### 3. Provide a testability host page when needed
 
-- If `ohosTest` launches the generated default page instead of the target component, create `src/ohosTest/ets/testability/pages/Index.ets` and add a hvigor task that copies it over `build/default/intermediates/src/ohosTest/ets/testability/pages/Index.ets` after `ohosTest@GenerateOhosTestTemplate` and before `ohosTest@OhosTestCompileArkTS`.
+- If `ohosTest` launches the generated default page instead of the target component, create `src/ohosTest/ets/testability/pages/Index.ets` and add a hvigor task that copies it over `build/default/intermediates/src/ohosTest/ets/testability/pages/Index.ets` after `ohosTest@GenerateOhosTestTemplate` and before `ohosTest@OhosTestCompileArkTS`. A complete `hvigorfile.ts` plugin and the relative-path gotcha are documented in the [@ComponentV2 Private Method pattern](#pattern-testing-componentv2-private-methods-without-modifying-source) below.
 - Keep the test host minimal. Provide only the props, `AppStorage` keys, and mock controllers needed to render the target UI.
 - Seed required `AppStorage` keys in `aboutToAppear()`.
 - Give host-page scenario buttons stable ids and wait for the host page by id, not by visible text.
@@ -201,6 +201,192 @@ Confirm all of these from the non-sandbox run when available:
    - Retry `hdc list targets` in the same non-sandbox environment that will run `onDeviceTest`.
    - If `hvigorw` then fails before compile with `NODE_HOME is not set and not 'node' command found in your path`, prepend `NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node` and retry.
    - If `hvigorw` fails to acquire daemon registration or lock state, rerun with `--no-daemon`.
+
+---
+
+## Pattern: Testing @ComponentV2 Private Methods Without Modifying Source
+
+A `@ComponentV2` struct's `private` methods cannot be called from outside, yet they often hold lifecycle-critical event-driven branches: state clamping after a gesture's `onActionEnd`, visual snap-back after a double tap, side effects in async `.then(...)`, etc. Two common wrong turns:
+
+- **Make the method `public` or move it into a model** — invasive, breaks encapsulation, and the moved logic is no longer the original code if it depends on `@Trace` fields, frame width, or layout sizes.
+- **Extract a pure function and unit-test that** — same problem when the logic is bound to component state.
+
+Right answer: **launch the real component inside an Instrument Test process**, drive the target method through its real triggers (gesture, click, property callback), then read component state back to assert. Four pillars make this reliable.
+
+### Pillar 1 — Testability host page
+
+Place a test-only host page at `<module>/src/ohosTest/ets/testability/pages/Index.ets`:
+
+- Instantiate the real component under test inside a `Stack`/`Column` with a stable `.id(...)`.
+- Hold an `@Local` model on the host page as the single source of truth for the whole test.
+- For each scenario (S1, S2, ...) place one **`Button`** whose `onClick` mutates the model into that scenario's initial conditions. Give it `.id('btn_s1')` etc. — these are the test-side click handles.
+- Put an anchor `Text('...').id(HOST_ANCHOR_ID)` near the top. The test's `beforeAll` `waitForComponent`s this id as the "page is ready" signal so cases don't race.
+
+> Key: **one button per scenario** is more robust than building Want parameters inside the test, and a failing case can be reproduced manually by tapping that button.
+
+### Pillar 2 — Hvigor build-time replacement plugin
+
+`GenerateOhosTestTemplate` writes a placeholder `Index.ets` (typically just `Text('Hello')`) into `build/default/intermediates/.../testability/pages/Index.ets`, overwriting the host page above. Add a hvigor plugin in the module's `hvigorfile.ts` that runs after `GenerateOhosTestTemplate` and before `OhosTestCompileArkTS` and copies the source host page over the placeholder:
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+import { hvigor } from '@ohos/hvigor';
+import { hapTasks } from '@ohos/hvigor-ohos-plugin';  // har modules use harTasks
+import type { HvigorPlugin } from '@ohos/hvigor';
+
+const ON_DEVICE_TEST_TASK = 'onDeviceTest';
+const GENERATE_OHOS_TEST_TEMPLATE_TASK = 'ohosTest@GenerateOhosTestTemplate';
+const OHOS_TEST_COMPILE_ARK_TS_TASK = 'ohosTest@OhosTestCompileArkTS';
+
+const replaceOhosTestIndexPlugin: HvigorPlugin = {
+    pluginId: 'replace_ohos_test_index',
+    apply(node) {
+        hvigor.nodesEvaluated(() => {
+            const entryTasks = new Set(hvigor.getCommandEntryTask() ?? []);
+            if (!entryTasks.has(ON_DEVICE_TEST_TASK)) {
+                return;
+            }
+            node.registerTask({
+                name: 'ReplaceOhosTestIndex',
+                dependencies: [GENERATE_OHOS_TEST_TEMPLATE_TASK],
+                postDependencies: [OHOS_TEST_COMPILE_ARK_TS_TASK],
+                run(taskContext) {
+                    const sourcePath = path.resolve(taskContext.modulePath,
+                        'src/ohosTest/ets/testability/pages/Index.ets');
+                    const targetPath = path.resolve(taskContext.modulePath,
+                        'build/default/intermediates/src/ohosTest/ets/testability/pages/Index.ets');
+                    if (!fs.existsSync(sourcePath)) {
+                        return;
+                    }
+                    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+                    fs.copyFileSync(sourcePath, targetPath);
+                }
+            });
+        });
+    }
+};
+
+export default {
+    system: hapTasks,   // har modules: harTasks
+    plugins: [replaceOhosTestIndexPlugin]
+}
+```
+
+**Relative-path gotcha**: the host page gets copied to `build/default/intermediates/src/ohosTest/ets/testability/pages/Index.ets` and compiled from there, so any `import` of the component under `src/main/ets/...` must be computed from the **post-copy** location — typically `../../../../../../../../src/main/ets/...` (**eight `..` levels**). Compute first, write second; getting it wrong yields `Cannot find module`.
+
+### Pillar 3 — Gating flags
+
+The target private method usually hangs off an event's `onActionEnd`, but the same event's `onActionStart` / `onActionUpdate` typically mutates intermediate state first (e.g. `PanGesture.onActionUpdate` accumulates `offsetX/offsetY`). Without isolation, `onActionEnd` sees state already perturbed by the gesture and assertions become non-deterministic.
+
+Solution: have the model expose a set of boolean switches (`panEnabled`, `zoomEnabled`, `interactive`, ...) and let the component's update callbacks early-return on `if (!this.model.panEnabled) return;`. In the host page's `apply(scenario)`, **disable all interfering switches first**, then inject the scenario's exact initial state, so a `swipe` triggers only the `onActionEnd` path under test.
+
+> If production code does not yet have these switches, that is usually a missing component-design seam rather than a "test compromise". A last-resort alternative is to issue an extremely short swipe (<5px) so `onActionStart/Update` accumulation is approximately zero — but that "trick the system with small magnitude" approach is fragile.
+
+### Pillar 4 — State echo via `Text` + `.id()`
+
+For every `@Trace` field you want to assert on, render it as `Text('${this.model.scale}').id('crop_model_scale')`. The test-side `Driver.waitForComponent(ON.id(...))` returns a `Component`, then `getText()` reads the value back — this is the only stable read path inside Instrument Tests. Name `.id`s after the field they echo (e.g. `model_scale`, `model_offset_x`).
+
+For asynchronous waits (after a click or after a gesture ends), use a small polling helper:
+
+```typescript
+async function waitForText(id: string, expected: string, timeout = 5000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() <= deadline) {
+    try { if ((await textOf(id)) === expected) return; } catch (_) {}
+    await DRIVER.waitForIdle(100, 1000);
+  }
+  throw new Error(`Text mismatch on ${id}: expected ${expected}, got ${await textOf(id)}`);
+}
+```
+
+### Workflow for this pattern
+
+**1. Identify trigger points.** Read the `@ComponentV2` source and locate every call site of the target private method (`this.checkImageAdapt()`). They typically come from:
+- `PanGesture.onActionEnd` / `TapGesture` / `PinchGesture` end callbacks
+- `@Watch` / `@Monitor` reactive functions
+- `.then(...)` of an async task
+
+Each trigger maps to one driving technique: gestures → `Driver.swipe / pinch / click`; watches → mutate the model field on the host page; async → `waitForIdle` plus polling.
+
+**2. Design the scenario matrix.** Enumerate the method's branches as a table where each row carries an **initial condition** (every model field to inject) and an **expected post-state**. Compute the math before writing tests; expected values that come out as `0.3333…` are a sign the scenario was poorly chosen — pick initial conditions that divide cleanly. Each row maps to one `Button('S1').id('btn_s1').onClick(() => apply({...}))` plus one `it('S1_<semantic-name>', 0, async () => { ... })`.
+
+**3. Write the test file** at `<module>/src/ohosTest/ets/test/<FeatureName>.test.ets`, `export default function`, then import it from `List.test.ets`. Skeleton:
+
+```typescript
+import { describe, beforeAll, afterEach, it, expect } from '@ohos/hypium';
+import { Component, Driver, ON } from '@kit.TestKit';
+
+const DRIVER = Driver.create();
+
+async function findById(id: string, timeout = 5000): Promise<Component> {
+  const comp = await DRIVER.waitForComponent(ON.id(id), timeout);
+  if (comp === null) throw new Error(`Component not found: ${id}`);
+  return comp;
+}
+async function clickById(id: string) {
+  await (await findById(id)).click();
+  await DRIVER.waitForIdle(300, 3000);
+}
+async function textOf(id: string): Promise<string> {
+  return (await findById(id)).getText();
+}
+
+export default function FeatureTest() {
+  describe('FeatureTest', () => {
+    beforeAll(async () => {
+      await DRIVER.waitForIdle(1000, 10000);
+      await findById(HOST_ANCHOR_ID, 10000);
+    });
+    afterEach(async () => { await DRIVER.waitForIdle(200, 2000); });
+
+    it('S1_<scenario-name>', 0, async () => {
+      await clickById('btn_s1');
+      await waitForText(SCALE_ID, '<expected-preset>');   // confirm initial state
+      await triggerTargetMethod();                         // drive the method
+      expect(await textOf(SCALE_ID)).assertEqual('<expected-after>');
+    });
+  });
+}
+```
+
+`triggerTargetMethod` must hug the target's real call site — `PanGesture` → `DRIVER.swipe`, with **swipe coordinates that avoid other tappable children** (buttons, image tap regions) inside the component, otherwise the swipe lands on the wrong element.
+
+**4. Wire and run.** Import the new suite in `<module>/src/ohosTest/ets/test/List.test.ets` and call it from `testsuite()`. Run via the sibling `instrument-test` skill's script — and use **`uv run python`** (this machine's Python is managed by `uv`):
+
+```bash
+export PATH="/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin:/Applications/DevEco-Studio.app/Contents/tools/node/bin:$PATH"
+export DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk
+export NODE_HOME=/Applications/DevEco-Studio.app/Contents/tools/node
+uv run python ~/.claude/skills/instrument-test/scripts/run_instrument_test.py \
+  --project-path <project-root> \
+  --module <module-name> \
+  --no-coverage \
+  --scope <TestSuiteName> \
+  --timeout 600
+```
+
+Do **not** invoke `python3` directly — that picks up the wrong interpreter and dependency set.
+
+The script returns JSON, but the `reports` field is sometimes empty. Do not trust `success=true` on its own. **Read** `<module>/.test/default/intermediates/ohosTest/coverage_data/test_result.txt` and confirm its last line matches `Tests run: N, Failure: 0, Error: 0, Pass: N, Ignore: 0`.
+
+### Failure modes for this pattern
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| `Cannot find module '...AvatarUpload'` | Host-page `import` relative-path level count is wrong | Recount from `build/default/intermediates/src/ohosTest/ets/testability/pages/` to `src/main/ets/...` — typically eight `..` levels |
+| `Component not found: <id>` | Host page was not replaced into the build, or has not rendered yet | Verify the hvigor plugin actually ran; `beforeAll` should wait for `HOST_ANCHOR_ID` before the first case |
+| Asserted value is off by one gesture increment | Gating switch was not disabled, so `onActionUpdate` polluted state before `onActionEnd` | Disable every `*Enabled` switch at the top of `apply(scenario)` |
+| `The path ... phone-default-signed.hap does not exist` | Signing environment issue (not a test bug) | Configure signing in DevEco or move to a signed environment |
+| Script reports `success=true` but `reports` is `{}` | Normal when coverage is disabled | Read `test_result.txt` for the real verdict |
+
+### Recap
+
+- Host page + hvigor replacement plugin keeps the production `Index.ets` untouched.
+- Gating flags isolate unrelated state updates so the target method runs against a clean input.
+- `Text` + `.id()` echo plus `waitForText` give a stable async read of `@Trace` state.
+- One button per scenario with the math precomputed.
+- Drive `instrument-test` script via `uv run python` and rely on `test_result.txt` as the final verdict.
 
 ---
 

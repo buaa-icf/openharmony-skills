@@ -1,6 +1,6 @@
 ---
 name: arkts-local-test-coverage
-description: Use when Codex needs to add or repair ArkTS/OpenHarmony Local Tests for non-UI logic, especially `src/test/*.test.ets` suites that must be wired into `List.test.ets`, executed outside the sandbox with `hvigorw test -p coverage=true`, or verified through `.test/default/...` coverage artifacts. Also use when an `@Entry` or non-exported page needs a test-local route-capture helper. Do not use for UI tests, and do not modify the source file under test.
+description: Use when adding or repairing ArkTS/OpenHarmony Local Tests for non-UI logic, especially `src/test/*.test.ets` suites that must be wired into `List.test.ets`, executed outside the sandbox with `hvigorw test -p coverage=true`, or verified through `.test/default/...` coverage artifacts. Also use when an `@Entry` or non-exported page needs a test-local route-capture helper. Do not use for UI tests, and do not modify the source file under test.
 ---
 
 # ArkTS Local Test Coverage

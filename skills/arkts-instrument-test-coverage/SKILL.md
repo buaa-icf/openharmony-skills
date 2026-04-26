@@ -1,6 +1,6 @@
 ---
 name: arkts-instrument-test-coverage
-description: Create and repair ArkTS/OpenHarmony Instrument Tests under src/ohosTest for UI components and builders, especially when tests need custom testability pages, stable selectors, hvigor onDeviceTest coverage execution, or device-side crash debugging. Use when Codex needs HarmonyOS on-device coverage for ArkTS UI behavior such as builder functions, settings panels, and interactive components; do not use for src/test local tests.
+description: Create and repair ArkTS/OpenHarmony Instrument Tests under src/ohosTest for UI components and builders, especially when tests need custom testability pages, stable selectors, hvigor onDeviceTest coverage execution, or device-side crash debugging. Use when adding HarmonyOS on-device coverage for ArkTS UI behavior such as builder functions, settings panels, and interactive components; do not use for src/test local tests.
 ---
 
 # ArkTS Instrument Test Coverage

@@ -25,11 +25,15 @@ Use this checklist when `coverage=true` still produces all-zero JSON or HTML rep
 
 ## 5. Apply the local previewer workaround
 
-Run:
-`node ~/.codex/skills/arkts-local-test-coverage/scripts/patch-hypium-local-test-coverage.js /path/to/repo`
+The patch script ships with this skill at `scripts/patch-hypium-local-test-coverage.js`
+(relative to the skill root, e.g. `~/.claude/skills/arkts-local-test-coverage/scripts/...`
+when installed locally).
 
-Or, from the repo root:
-`node ~/.codex/skills/arkts-local-test-coverage/scripts/patch-hypium-local-test-coverage.js`
+Run from the repo root:
+`node <skill-root>/scripts/patch-hypium-local-test-coverage.js`
+
+Or pass the repo path explicitly:
+`node <skill-root>/scripts/patch-hypium-local-test-coverage.js /path/to/repo`
 
 Use `--check` to inspect status without modifying files.
 

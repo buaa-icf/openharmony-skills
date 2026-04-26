@@ -1,6 +1,6 @@
 # openharmony-skills
 
-Codex skills for OpenHarmony and ArkTS testing workflows.
+Claude Code skills for OpenHarmony and ArkTS testing workflows.
 
 ## Included Skills
 
@@ -14,31 +14,38 @@ Codex skills for OpenHarmony and ArkTS testing workflows.
 ```text
 skills/
   arkts-local-test-coverage/
+    SKILL.md
+    references/
+    scripts/
   arkts-instrument-test-coverage/
+    SKILL.md
 ```
 
-## Install A Skill
+## Install
 
-Install directly from this repository with Codex's GitHub skill installer:
+Claude Code auto-discovers skills under `~/.claude/skills/`. Install a single
+skill by copying (or symlinking) its directory there:
 
 ```bash
-python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo buaa-icf/openharmony-skills \
-  --path skills/arkts-local-test-coverage
+# Copy
+cp -R skills/arkts-local-test-coverage ~/.claude/skills/
+cp -R skills/arkts-instrument-test-coverage ~/.claude/skills/
+
+# Or symlink from a checkout so updates flow through
+ln -s "$(pwd)/skills/arkts-local-test-coverage"     ~/.claude/skills/arkts-local-test-coverage
+ln -s "$(pwd)/skills/arkts-instrument-test-coverage" ~/.claude/skills/arkts-instrument-test-coverage
 ```
 
-Install both skills:
+Confirm Claude Code sees the skills:
 
 ```bash
-python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo buaa-icf/openharmony-skills \
-  --path skills/arkts-local-test-coverage \
-  --path skills/arkts-instrument-test-coverage
+ls ~/.claude/skills/ | grep arkts-
 ```
 
-## Validate
+## Use
 
-```bash
-uv run --with pyyaml ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/arkts-local-test-coverage
-uv run --with pyyaml ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/arkts-instrument-test-coverage
-```
+Once installed, Claude Code triggers each skill automatically through its
+`Skill` tool when the conversation matches the skill's `description`
+frontmatter — no manual activation needed. You can also invoke a skill
+explicitly by name (e.g. ask Claude to "use the `arkts-local-test-coverage`
+skill").

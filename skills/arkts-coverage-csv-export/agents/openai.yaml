@@ -1,0 +1,4 @@
+interface:
+  display_name: "ArkTS Coverage CSV Export"
+  short_description: "Export ArkTS coverage CSV reports for dataset and clone fragments"
+  default_prompt: "Use $arkts-coverage-csv-export to expand ArkTS dataset targets including code-clone similar fragments from message text, rerun Local Test or Instrument Test with outside-sandbox hvigor by default, verify coverage artifacts, and export method-level coverage as CSV."

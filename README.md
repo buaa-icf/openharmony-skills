@@ -4,48 +4,52 @@ Claude Code skills for OpenHarmony and ArkTS testing workflows.
 
 ## Included Skills
 
-- `skills/arkts-local-test-coverage`
-  Add or repair ArkTS Local Tests for non-UI logic and verify coverage artifacts.
-- `skills/arkts-instrument-test-coverage`
-  Add or repair ArkTS `ohosTest` UI coverage with on-device execution.
+- `skills/arkts-test-generation`
+  Author or repair ArkTS tests for HarmonyOS modules — both `src/test`
+  Local Tests for non-UI logic and `src/ohosTest` Instrument Tests for
+  UI components — and verify their coverage artifacts.
+
+  This skill complements (does not replace) other skills already shipped
+  under `~/.claude/skills/`:
+  - `local-test` / `instrument-test` — *run* existing suites
+  - `arkts-componentv2-private-method-test` — narrow `@ComponentV2`
+    private-method scenarios
 
 ## Repository Layout
 
 ```text
 skills/
-  arkts-local-test-coverage/
+  arkts-test-generation/
     SKILL.md
     references/
+      zero-coverage-workflow.md
     scripts/
-  arkts-instrument-test-coverage/
-    SKILL.md
+      patch-hypium-local-test-coverage.js
 ```
 
 ## Install
 
-Claude Code auto-discovers skills under `~/.claude/skills/`. Install a single
-skill by copying (or symlinking) its directory there:
+Claude Code auto-discovers skills under `~/.claude/skills/`. Install by
+copying (or symlinking) the skill directory there:
 
 ```bash
 # Copy
-cp -R skills/arkts-local-test-coverage ~/.claude/skills/
-cp -R skills/arkts-instrument-test-coverage ~/.claude/skills/
+cp -R skills/arkts-test-generation ~/.claude/skills/
 
 # Or symlink from a checkout so updates flow through
-ln -s "$(pwd)/skills/arkts-local-test-coverage"     ~/.claude/skills/arkts-local-test-coverage
-ln -s "$(pwd)/skills/arkts-instrument-test-coverage" ~/.claude/skills/arkts-instrument-test-coverage
+ln -s "$(pwd)/skills/arkts-test-generation" ~/.claude/skills/arkts-test-generation
 ```
 
-Confirm Claude Code sees the skills:
+Confirm Claude Code sees the skill:
 
 ```bash
-ls ~/.claude/skills/ | grep arkts-
+ls ~/.claude/skills/ | grep arkts-test-generation
 ```
 
 ## Use
 
-Once installed, Claude Code triggers each skill automatically through its
+Once installed, Claude Code triggers the skill automatically through its
 `Skill` tool when the conversation matches the skill's `description`
-frontmatter — no manual activation needed. You can also invoke a skill
-explicitly by name (e.g. ask Claude to "use the `arkts-local-test-coverage`
+frontmatter — no manual activation needed. You can also invoke it
+explicitly by name (e.g. ask Claude to "use the `arkts-test-generation`
 skill").

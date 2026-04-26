@@ -1,4 +1,0 @@
-interface:
-  display_name: "ArkTS Local Test Coverage"
-  short_description: "Create non-UI ArkTS Local Tests and fix coverage"
-  default_prompt: "Use $arkts-local-test-coverage to add ArkTS Local Test cases for non-UI logic and make sure coverage reports are generated correctly."

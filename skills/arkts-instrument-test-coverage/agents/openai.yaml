@@ -1,4 +1,0 @@
-interface:
-  display_name: "ArkTS Instrument Test Coverage"
-  short_description: "Add and debug ArkTS onDeviceTest coverage"
-  default_prompt: "Use $arkts-instrument-test-coverage to add or repair an ArkTS Instrument Test with on-device coverage."

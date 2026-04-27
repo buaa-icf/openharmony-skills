@@ -1,6 +1,6 @@
 ---
 name: arkts-test-generation
-description: Use when authoring or repairing ArkTS/OpenHarmony test code for HarmonyOS modules — covers both `src/test/*.test.ets` Local Tests for non-UI logic (suite registration in `List.test.ets`, route-capture helpers for `@Entry` or non-exported pages, MockKit/Hypium patterns) and `src/ohosTest/*.test.ets` Instrument Tests for UI components (custom testability host pages, hvigor build-time host-page replacement, stable `.id(...)` selectors, `@ComponentV2` private/internal method testing via host page + gating flags + state echo). This skill writes the test code and wires it into the suite; hand off execution, coverage runs, and artifact verification to the sibling `local-test` skill (Local Test) or `instrument-test` skill (Instrument Test). Do not modify the source file under test to make it easier to cover.
+description: Use when authoring or repairing ArkTS/OpenHarmony test code for HarmonyOS modules — covers both `src/test/*.test.ets` Local Tests for non-UI logic (suite registration in `List.test.ets`, route-capture helpers for `@Entry` or non-exported pages, MockKit/Hypium patterns) and `src/ohosTest/*.test.ets` Instrument Tests for UI components (custom testability host pages, hvigor build-time host-page replacement, stable `.id(...)` selectors, `@ComponentV2` private/internal method testing via host page + gating flags + state echo). This skill writes the test code and wires it into the suite; hand off execution, coverage runs, and artifact verification to the sibling `local-test` skill (Local Test) or `instrument-test` skill (Instrument Test). For Local Test do not modify the source file under test to make it easier to cover; for Instrument Test, adding stable `.id(...)` selectors to action targets and list/grid items in the production source is permitted (and usually required), but no other behavior-changing edits.
 ---
 
 # ArkTS Test Generation
@@ -17,7 +17,10 @@ Pick the right test type, write or extend the suite, register it in the module's
 - Local Test → `local-test` skill
 - Instrument Test → `instrument-test` skill
 
-Do not edit the file under test to make coverage easier — solve from the test side.
+**Source-edit rule (differs by test type):**
+
+- **Local Test** — do not edit the file under test. Solve everything from the test side (route capture, helpers, stubs, runtime seams).
+- **Instrument Test** — the only acceptable source edit is adding stable `.id(...)` selectors on interactive nodes (action targets, list/grid items, scenario buttons), and only when the device-side `Driver` cannot reliably reach them by visible text. This is permitted because Hypium's selector engine resolves against the accessibility tree — `GridItem` / `ListItem` rendered inside `ForEach`/`Repeat`, `Text() { Span(...) }` click targets, and elements with duplicated visible labels are otherwise unaddressable, and the test gap is a real capability constraint of the runner rather than test ergonomics. Keep these edits additive: do not change layout, conditions, callbacks, or any runtime behavior; do not introduce flags or test-only branches.
 
 ## Decision: Local Test Or Instrument Test
 
@@ -49,7 +52,7 @@ Do not design UI-style assertions inside Local Test, and do not write logic-only
 - Match the project's Hypium style and keep tests in the owning module, usually `product/<module>/src/test`.
 - Keep the suite at the Local Test level: verify pure logic, mapping, state transitions, model calls, and other non-UI behavior.
 - Do not design UI tests, component interaction scripts, or gesture-driven scenarios in this workflow.
-- Do not edit the file under test. If access is awkward, solve it from the test side with helpers, stubs, route capture, wrappers, or other `src/test`-local techniques.
+- Do not edit the file under test (Local Test rule, no exceptions). If access is awkward, solve it from the test side with helpers, stubs, route capture, wrappers, or other `src/test`-local techniques. The `.id(...)` exception described in the overview is **Instrument Test only** — Local Test never needs to address nodes through the device accessibility tree, so it never needs to add ids to source.
 - For exported `@ComponentV2` structs or components whose source-level constructor signature does not match the generated Local Test runtime, instantiate them through the runtime seam instead of changing production code. A practical pattern is `new Target(undefined, new TestLocalStorage())`, where `TestLocalStorage extends LocalStorage` and exposes required event callbacks such as `onChange` as instance properties so generated checks like `"onChange" in params` succeed.
 - Avoid prototype-hack fallbacks for those components. Direct prototype assignment can hit ArkTS compile restrictions, `Object.create(Target.prototype)` may fail under the Local Test runtime, and JS or TS helper files cannot import ArkTS sources.
 - When the target is an `@Entry` or non-exported page, prefer a tiny `src/test` route-capture helper over exporting production code. Install the capture before importing the page, intercept `registerNamedRoute`, filter by `pagePath` or `pageFullPath`, and call the captured builder to obtain the page instance.
@@ -82,7 +85,8 @@ Do not design UI-style assertions inside Local Test, and do not write logic-only
 ### 2. Translate the request into UI assertions
 
 - Map each behavior under test to concrete UI assertions: visible labels, stable ids, state changes, and interactive results.
-- Add stable `.id(...)` selectors to every action target whose text is duplicated, composed from `Text() { Span(...) }`, rendered inside repeated rows, or exposed through a scenario-switch host page. Keep text matching for passive assertions only.
+- Add stable `.id(...)` selectors directly on the production source's interactive nodes — action targets whose text is duplicated, composed from `Text() { Span(...) }`, rendered inside repeated rows (`ForEach`/`Repeat` `GridItem`/`ListItem`), or exposed through a scenario-switch host page — and on their containing `Grid`/`List` so the test can scroll-into-view first. This is the canonical Instrument Test exception: ids are non-behavioral metadata, the device-side accessibility tree has no other reliable handle on these nodes, and clicking them by index/text is what coverage of `onClick` branches actually requires. For repeated children include the iteration `index` in the id (e.g. `ForEach(this.searchList, (item, index) => { ... .id(\`sticker_search_item_${index}\`) })`), and embed the active tab/state into ids that depend on it (e.g. `.id(\`sticker_tab_grid_${this.stickerTabIndex}\`)`) so duplicate ids don't collide across tabs. Keep text matching for passive content assertions only — anything you intend to click goes via id.
+- Do not use the id exception as a wedge for other source edits. Adding new fields, flags, conditional render branches, callbacks, or `if (testMode) ...` shortcuts to the source under test is not allowed; if a branch can only be exercised through component state the test cannot set, drive it from the host page (props, `AppStorage`, scenario buttons) per the @ComponentV2 Private Method pattern below.
 
 ### 3. Provide a testability host page when needed
 

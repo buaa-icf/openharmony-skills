@@ -29,6 +29,7 @@ Audit ArkTS target records, hand off matching Local Test or Instrument Test suit
    - Instrument Test → hand off to the `instrument-test` skill (with `--module`, `--scope`, `--coverage`); confirm device availability via `hdc list targets` first if it is uncertain.
    - Capture the final command the runner skill executed and write it into the CSV `test_command` column verbatim.
    - When a runner skill cannot be used (denied, no environment, etc.), fall back to invoking hvigor directly only if it can still produce meaningful artifacts, and record the limitation in the CSV `note`.
+   - **Skip on `failed_missing_signed_hap`.** If the runner output shows `:SignHap` failing with `00303116` / `00303107` / "Invalid storeFile value" / "The length of the storePassword or keyPassword … is less than 32" / `signingConfigs` paths pointing at another user's `~/.ohos/config`, the project's committed signing material is bound to a different workstation and not reproducible here. Do **not** generate failure rows for these targets, do **not** spend time forging signing chains. Drop the affected records from the CSV entirely, log them under a "skipped (missing signed HAP)" bucket in the final report, and move on. The rationale: the signing setup is per-user and the user can re-run after configuring their own signing — including stub failure rows just clutters the CSV with environment noise that has nothing to do with test quality. If the user then says they have signing in place, re-run from step 3 for the skipped records only.
 
 4. Verify artifacts before trusting coverage.
    - Local Test evidence: `.test/default/intermediates/test/coverage_data/test_result.txt`, `coverage.log`, `js_coverage.json`, and `.test/default/outputs/test/reports/coverageReport.json`.
@@ -43,7 +44,7 @@ Audit ArkTS target records, hand off matching Local Test or Instrument Test suit
    - Count branch coverage by branch side: every branch contributes true and false sides; a side is covered when its count is greater than 0.
    - Use `N/A` for `branch_coverage_pct` when there are no branch sides in range.
    - Count overlapping functions by coverage regions intersecting the target range; covered functions have `count > 0`.
-   - Use explicit statuses such as `passed`, `build_failed_missing_dependencies`, `failed_beforeAll_missing_host_anchor`, `failed_missing_signed_hap`, `failed_no_device`, and `not_run_no_test`.
+   - Use explicit statuses such as `passed`, `build_failed_missing_dependencies`, `failed_beforeAll_missing_host_anchor`, `failed_no_device`, and `not_run_no_test`. Do **not** emit `failed_missing_signed_hap` rows — those targets are dropped per step 3.
 
 ## Script
 
@@ -76,4 +77,5 @@ In the final response, include:
 - test pass/fail summary from `test_result.txt`,
 - whether a Hypium coverage patch was applied,
 - coverage artifact paths used,
-- any rows where tests exist and pass but the target production function remains uncovered.
+- any rows where tests exist and pass but the target production function remains uncovered,
+- a separate "skipped (missing signed HAP)" list naming the records dropped per step 3, with one-line guidance to the user that re-running the skill after configuring local signing will pick those records up.
